@@ -29,6 +29,8 @@ const TEMPLATE = /* html */ `
     font-family: var(--nc-font, ui-sans-serif, system-ui, sans-serif); }
   .status { font-size: .78rem; color: var(--nc-faint, #a8a4b0); margin: .5rem .2rem; }
   #notes { display: grid; gap: .65rem; }
+  :host([flush]) #notes { gap: 0; }
+  :host([flush]) nostr-note { margin-top: -1px; }
 </style>
 <div class="status" id="status">connecting…</div>
 <div id="notes"></div>
