@@ -28,12 +28,17 @@ const TEMPLATE = /* html */ `
   :host { display: block;
     font-family: var(--nc-font, ui-sans-serif, system-ui, sans-serif); }
   .status { font-size: .78rem; color: var(--nc-faint, #a8a4b0); margin: .5rem .2rem; }
+  .pill { display: none; margin: .5rem auto; font: inherit; font-size: .85rem; font-weight: 650;
+    cursor: pointer; border: none; border-radius: 999px; padding: .5em 1.4em;
+    background: var(--nc-accent, #7c3aed); color: var(--nc-accent-ink, #fff); }
+  .pill.show { display: block; }
   #notes { display: grid; gap: .65rem; }
   :host([flush]) #notes { gap: 0; }
   :host([flush]) .status { display: none; }
   :host([flush]) nostr-note { margin-top: -1px; }
 </style>
 <div class="status" id="status">connecting…</div>
+<button class="pill" id="pill"></button>
 <div id="notes"></div>
 `
 
@@ -48,6 +53,10 @@ class NostrFeed extends HTMLElement {
     this.pool = null
     this.sub = null
     this.count = 0
+    this.buffer = []
+    this._eosed = false
+    this.pillEl = this.shadowRoot.getElementById('pill')
+    this.pillEl.onclick = () => this._flush()
   }
 
   connectedCallback() { this._resubscribe() }
@@ -86,10 +95,28 @@ class NostrFeed extends HTMLElement {
     const filters = this._filters()
     if (!filters) { this.statusEl.textContent = 'no valid authors (hex pubkeys required)'; return }
     this.statusEl.textContent = 'loading…'
+    this._eosed = false
+    this.buffer = []
+    this.pillEl.classList.remove('show')
     this.sub = this._pool.subscribe(filters, {
-      onEvent: (event) => this._add(event),
-      onEose: () => { this.statusEl.textContent = this.count + ' notes · live' },
+      onEvent: (event) => {
+        // batch-live: after the backlog, X-style — buffer new posts behind a pill
+        if (this._eosed && this.hasAttribute('batch-live')) {
+          this.buffer.push(event)
+          this.pillEl.textContent = 'Show ' + this.buffer.length + (this.buffer.length === 1 ? ' post' : ' posts')
+          this.pillEl.classList.add('show')
+          return
+        }
+        this._add(event)
+      },
+      onEose: () => { this._eosed = true; this.statusEl.textContent = this.count + ' notes · live' },
     })
+  }
+
+  _flush() {
+    for (const event of this.buffer.splice(0)) this._add(event)
+    this.pillEl.classList.remove('show')
+    this.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   _add(event) {
