@@ -21,20 +21,30 @@ const URL_RE = /https?:\/\/[^\s<>"')\]]+/g
 
 const TEMPLATE = /* html */ `
 <style>
-  :host { display: block; font-family: system-ui, sans-serif; font-size: .95rem; }
-  .status { font-size: .8rem; opacity: .6; margin: .4rem 0; }
-  article { display: flex; gap: .7rem; padding: .8rem .4rem;
-    border-bottom: 1px solid rgba(127,127,127,.2); }
+  :host { display: block;
+    font-family: var(--nc-font, ui-sans-serif, system-ui, sans-serif);
+    font-size: .95rem; color: var(--nc-ink, #201d26); }
+  .status { font-size: .78rem; color: var(--nc-faint, #a8a4b0); margin: .5rem .2rem; }
+  #notes { display: grid; gap: .65rem; }
+  article { display: flex; gap: .8rem; padding: .9rem 1rem;
+    background: var(--nc-surface, #fff);
+    border: 1px solid var(--nc-line, #e9e6e0);
+    border-radius: var(--nc-radius, 14px);
+    box-shadow: var(--nc-shadow, 0 1px 2px rgb(32 27 51 / 4%), 0 6px 24px -10px rgb(32 27 51 / 10%));
+    cursor: pointer; transition: border-color .15s ease; }
+  article:hover { border-color: var(--nc-faint, #a8a4b0); }
   .avatar { width: 42px; height: 42px; border-radius: 50%; flex: none;
-    object-fit: cover; background: rgba(127,127,127,.2); }
+    object-fit: cover; background: var(--nc-inset, #f4f2ee);
+    border: 1px solid var(--nc-line, #e9e6e0); }
   .body { min-width: 0; flex: 1; }
-  .meta { font-size: .8rem; margin-bottom: .2rem; }
-  .meta .name { font-weight: 600; }
-  .meta .when { opacity: .55; }
-  .content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
-  .content a { color: var(--nostr-accent, #8e30eb); }
+  .meta { font-size: .8rem; margin-bottom: .25rem; }
+  .meta .name { font-weight: 650; }
+  .meta .when { color: var(--nc-faint, #a8a4b0); }
+  .content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55;
+    font-family: var(--nc-font-content, inherit); }
+  .content a { color: var(--nc-accent, #7c3aed); }
   .content img { max-width: 100%; max-height: 22rem; border-radius: 10px;
-    display: block; margin-top: .4rem; }
+    display: block; margin-top: .5rem; border: 1px solid var(--nc-line, #e9e6e0); }
 </style>
 <div class="status" id="status">connecting…</div>
 <div id="notes"></div>
@@ -100,6 +110,12 @@ class NostrFeed extends HTMLElement {
     this.count++
     const article = document.createElement('article')
     article.dataset.pubkey = event.pubkey
+    article.addEventListener('click', (e) => {
+      if (e.target.closest('a, img')) return // links and images keep their own behavior
+      this.dispatchEvent(new CustomEvent('nostr:note-click', {
+        detail: { event }, bubbles: true, composed: true,
+      }))
+    })
 
     const avatar = document.createElement('img')
     avatar.className = 'avatar'
