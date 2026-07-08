@@ -26,6 +26,9 @@ Attributes (all reactive — change them and the feed resubscribes):
 | `kinds` | `1` | comma-separated kind numbers |
 | `limit` | `30` | initial backlog; stays live after EOSE |
 | `relays` | shared `defaultPool()` | comma-separated relay URLs |
+| `hashtag` | — | filter to one `#t` topic |
+| `flush` (flag) | cards | zero gap between notes — flat list layouts |
+| `flat` (flag) | cards | hairline-row note styling (bluesky/mastodon look) |
 
 Or set the `.pool` property to any object with `subscribe`/`list`.
 
