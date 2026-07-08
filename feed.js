@@ -1,7 +1,8 @@
 /**
- * feed.js — <nostr-feed>, a live nostr note feed with profile resolution.
- * No build step. Composes with the shared pool; safe rendering (no innerHTML
- * of user content).
+ * feed.js — <nostr-feed>, a live nostr note feed.
+ * No build step. Subscription, dedup and ordering live here; each note is a
+ * <nostr-note> card from the note repo (rich safe content, shared profile
+ * resolution, reactions if reactions.js is on the page).
  *
  * Part of https://github.com/nostr-client — one repo, one thing.
  * License: AGPL-3.0-or-later
@@ -10,48 +11,31 @@
  *   <script type="module" src="https://nostr-client.github.io/feed/feed.js"></script>
  *   <nostr-feed limit="30"></nostr-feed>
  *   <nostr-feed authors="<hex>,<hex>"></nostr-feed>     <!-- hex, always hex -->
- *   <nostr-feed relays="wss://a,wss://b" kinds="1" live></nostr-feed>
+ *   <nostr-feed hashtag="bitcoin"></nostr-feed>
+ *   <nostr-feed relays="wss://a,wss://b" kinds="1" limit="20"></nostr-feed>
+ *
+ * All attributes are reactive — change one and the feed resubscribes.
+ * Clicking a note emits 'nostr:note-click' { event } (from the note card).
  */
 
 import { Pool, defaultPool } from 'https://nostr-client.github.io/pool/pool.js'
-import { npubShort } from 'https://nostr-client.github.io/nip19/nip19.js'
+import 'https://nostr-client.github.io/note/note.js'
 
-const IMAGE_RE = /\.(png|jpe?g|gif|webp|avif)(\?\S*)?$/i
-const URL_RE = /https?:\/\/[^\s<>"')\]]+/g
+const HEX64 = /^[0-9a-f]{64}$/
 
 const TEMPLATE = /* html */ `
 <style>
   :host { display: block;
-    font-family: var(--nc-font, ui-sans-serif, system-ui, sans-serif);
-    font-size: .95rem; color: var(--nc-ink, #201d26); }
+    font-family: var(--nc-font, ui-sans-serif, system-ui, sans-serif); }
   .status { font-size: .78rem; color: var(--nc-faint, #a8a4b0); margin: .5rem .2rem; }
   #notes { display: grid; gap: .65rem; }
-  article { display: flex; gap: .8rem; padding: .9rem 1rem;
-    background: var(--nc-surface, #fff);
-    border: 1px solid var(--nc-line, #e9e6e0);
-    border-radius: var(--nc-radius, 14px);
-    box-shadow: var(--nc-shadow, 0 1px 2px rgb(32 27 51 / 4%), 0 6px 24px -10px rgb(32 27 51 / 10%));
-    cursor: pointer; transition: border-color .15s ease; }
-  article:hover { border-color: var(--nc-faint, #a8a4b0); }
-  .avatar { width: 42px; height: 42px; border-radius: 50%; flex: none;
-    object-fit: cover; background: var(--nc-inset, #f4f2ee);
-    border: 1px solid var(--nc-line, #e9e6e0); }
-  .body { min-width: 0; flex: 1; }
-  .meta { font-size: .8rem; margin-bottom: .25rem; }
-  .meta .name { font-weight: 650; }
-  .meta .when { color: var(--nc-faint, #a8a4b0); }
-  .content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55;
-    font-family: var(--nc-font-content, inherit); }
-  .content a { color: var(--nc-accent, #7c3aed); }
-  .content img { max-width: 100%; max-height: 22rem; border-radius: 10px;
-    display: block; margin-top: .5rem; border: 1px solid var(--nc-line, #e9e6e0); }
 </style>
 <div class="status" id="status">connecting…</div>
 <div id="notes"></div>
 `
 
 class NostrFeed extends HTMLElement {
-  static observedAttributes = ['authors', 'kinds', 'relays', 'limit']
+  static observedAttributes = ['authors', 'kinds', 'relays', 'limit', 'hashtag']
 
   constructor() {
     super()
@@ -60,9 +44,6 @@ class NostrFeed extends HTMLElement {
     this.statusEl = this.shadowRoot.getElementById('status')
     this.pool = null
     this.sub = null
-    this.profiles = new Map()   // hex pubkey -> { profile data } | null (pending)
-    this.pendingProfiles = new Set()
-    this.profileTimer = null
     this.count = 0
   }
 
@@ -86,10 +67,12 @@ class NostrFeed extends HTMLElement {
     }
     const authors = this.getAttribute('authors')
     if (authors) {
-      const list = authors.split(',').map((s) => s.trim().toLowerCase()).filter((s) => /^[0-9a-f]{64}$/.test(s))
+      const list = authors.split(',').map((s) => s.trim().toLowerCase()).filter((s) => HEX64.test(s))
       if (!list.length) return null // authors requested but none valid — show nothing
       filter.authors = list
     }
+    const hashtag = this.getAttribute('hashtag')
+    if (hashtag) filter['#t'] = [hashtag.replace(/^#/, '').toLowerCase()]
     return [filter]
   }
 
@@ -108,124 +91,21 @@ class NostrFeed extends HTMLElement {
 
   _add(event) {
     this.count++
-    const article = document.createElement('article')
-    article.dataset.pubkey = event.pubkey
-    article.addEventListener('click', (e) => {
-      if (e.target.closest('a, img')) return // links and images keep their own behavior
-      this.dispatchEvent(new CustomEvent('nostr:note-click', {
-        detail: { event }, bubbles: true, composed: true,
-      }))
-    })
-
-    const avatar = document.createElement('img')
-    avatar.className = 'avatar'
-    avatar.alt = ''
-    avatar.loading = 'lazy'
-
-    const body = document.createElement('div')
-    body.className = 'body'
-    const meta = document.createElement('div')
-    meta.className = 'meta'
-    const name = document.createElement('span')
-    name.className = 'name'
-    name.textContent = npubShort(event.pubkey)
-    const when = document.createElement('span')
-    when.className = 'when'
-    when.textContent = ' · ' + this._ago(event.created_at)
-    when.title = new Date(event.created_at * 1000).toLocaleString()
-    meta.append(name, when)
-
-    const content = document.createElement('div')
-    content.className = 'content'
-    this._renderContent(content, event.content)
-
-    body.append(meta, content)
-    article.append(avatar, body)
+    const note = document.createElement('nostr-note')
+    note.setAttribute('clickable', '')
+    if (this.pool && this.getAttribute('relays')) note.pool = this.pool
+    note.event = event
+    note.dataset.ts = event.created_at
 
     // insert newest-first by created_at
     let next = null
     for (const el of this.notesEl.children) {
       if (Number(el.dataset.ts) < event.created_at) { next = el; break }
     }
-    article.dataset.ts = event.created_at
-    this.notesEl.insertBefore(article, next)
+    this.notesEl.insertBefore(note, next)
 
     const max = Number(this.getAttribute('limit') || 30) * 3
     while (this.notesEl.children.length > max) this.notesEl.lastChild.remove()
-
-    this._wantProfile(event.pubkey)
-    this._applyProfile(article)
-  }
-
-  /** text + links + inline images, built with DOM nodes — never innerHTML */
-  _renderContent(el, text) {
-    if (text.length > 1200) text = text.slice(0, 1200) + '…'
-    let last = 0
-    for (const match of text.matchAll(URL_RE)) {
-      el.append(text.slice(last, match.index))
-      const url = match[0]
-      if (IMAGE_RE.test(url)) {
-        const img = document.createElement('img')
-        img.src = url
-        img.alt = ''
-        img.loading = 'lazy'
-        el.append(img)
-      } else {
-        const a = document.createElement('a')
-        a.href = url
-        a.textContent = url.length > 60 ? url.slice(0, 60) + '…' : url
-        a.target = '_blank'
-        a.rel = 'noopener noreferrer'
-        el.append(a)
-      }
-      last = match.index + url.length
-    }
-    el.append(text.slice(last))
-  }
-
-  _ago(ts) {
-    const s = Math.max(1, Math.floor(Date.now() / 1000 - ts))
-    if (s < 60) return s + 's'
-    if (s < 3600) return Math.floor(s / 60) + 'm'
-    if (s < 86400) return Math.floor(s / 3600) + 'h'
-    return Math.floor(s / 86400) + 'd'
-  }
-
-  // ------------------------------------------------ batched kind-0 lookups
-
-  _wantProfile(pubkey) {
-    if (this.profiles.has(pubkey) || this.pendingProfiles.has(pubkey)) return
-    this.pendingProfiles.add(pubkey)
-    clearTimeout(this.profileTimer)
-    this.profileTimer = setTimeout(() => this._fetchProfiles(), 400)
-  }
-
-  async _fetchProfiles() {
-    const authors = [...this.pendingProfiles]
-    this.pendingProfiles.clear()
-    if (!authors.length) return
-    for (const pk of authors) this.profiles.set(pk, null)
-    const events = await this._pool.list([{ kinds: [0], authors, limit: authors.length }])
-    const newest = new Map()
-    for (const ev of events) {
-      const prev = newest.get(ev.pubkey)
-      if (!prev || prev.created_at < ev.created_at) newest.set(ev.pubkey, ev)
-    }
-    for (const [pk, ev] of newest) {
-      try { this.profiles.set(pk, JSON.parse(ev.content)) } catch {}
-    }
-    for (const article of this.notesEl.children) this._applyProfile(article)
-  }
-
-  _applyProfile(article) {
-    const profile = this.profiles.get(article.dataset.pubkey)
-    if (!profile) return
-    const display = profile.display_name || profile.name
-    if (display) article.querySelector('.name').textContent = display
-    if (profile.picture) {
-      const avatar = article.querySelector('.avatar')
-      if (avatar.src !== profile.picture) avatar.src = profile.picture
-    }
   }
 }
 
