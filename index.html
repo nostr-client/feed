@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>feed — live nostr feed demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; } h1 a { text-decoration: none; }
+  code, pre { background: rgba(127,127,127,.12); border-radius: 4px; padding: .1em .3em; }
+  pre { padding: .75em; overflow-x: auto; }
+</style>
+</head>
+<body>
+<h1><a href="https://github.com/nostr-client/feed">nostr-client / feed</a></h1>
+<p>A live global feed in one tag — profiles resolved in batches, images inline,
+content rendered safely:</p>
+<pre>&lt;script type="module" src="https://nostr-client.github.io/feed/feed.js"&gt;&lt;/script&gt;
+&lt;nostr-feed limit="25"&gt;&lt;/nostr-feed&gt;</pre>
+
+<nostr-feed limit="25"></nostr-feed>
+
+<script type="module" src="./feed.js"></script>
+</body>
+</html>
