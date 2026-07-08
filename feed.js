@@ -30,6 +30,7 @@ const TEMPLATE = /* html */ `
   .status { font-size: .78rem; color: var(--nc-faint, #a8a4b0); margin: .5rem .2rem; }
   #notes { display: grid; gap: .65rem; }
   :host([flush]) #notes { gap: 0; }
+  :host([flush]) .status { display: none; }
   :host([flush]) nostr-note { margin-top: -1px; }
 </style>
 <div class="status" id="status">connecting…</div>
@@ -95,6 +96,7 @@ class NostrFeed extends HTMLElement {
     this.count++
     const note = document.createElement('nostr-note')
     note.setAttribute('clickable', '')
+    if (this.hasAttribute('flat')) note.setAttribute('flat', '')
     if (this.pool && this.getAttribute('relays')) note.pool = this.pool
     note.event = event
     note.dataset.ts = event.created_at
