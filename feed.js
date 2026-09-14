@@ -46,6 +46,27 @@ const TEMPLATE = /* html */ `
 <div id="notes"></div>
 `
 
+/**
+ * True when a note's whole content is a JSON document. Relays carry a lot of
+ * machine chatter published as kind-1 — device telemetry, presence beacons,
+ * agent handshakes — which is unreadable in a social feed.
+ *
+ * Deliberately strict, because false positives silence real people: the entire
+ * content must parse as a JSON object or array, so prose that merely mentions or
+ * quotes JSON is never touched. The length floor keeps a human typing "{}" or
+ * "[x]" or an emoticon out of it.
+ */
+export function isMachineJson(content) {
+  const text = (content ?? '').trim()
+  if (text.length < 24) return false
+  const first = text[0], last = text[text.length - 1]
+  if (!((first === '{' && last === '}') || (first === '[' && last === ']'))) return false
+  try {
+    const value = JSON.parse(text)
+    return value !== null && typeof value === 'object'
+  } catch { return false }
+}
+
 class NostrFeed extends HTMLElement {
   static observedAttributes = ['authors', 'kinds', 'relays', 'limit', 'hashtag']
 
@@ -102,8 +123,10 @@ class NostrFeed extends HTMLElement {
     this._eosed = false
     this.buffer = []
     this.pillEl.classList.remove('show')
+    const hideJson = this.hasAttribute('hide-json')
     this.sub = this._pool.subscribe(filters, {
       onEvent: (event) => {
+        if (hideJson && isMachineJson(event.content)) return
         // batch-live: after the backlog, X-style — buffer new posts behind a pill.
         // But never behind an EMPTY feed: EOSE fires once the first relay finishes
         // (or 2.5s later), so a slower relay's backlog would otherwise land in the
