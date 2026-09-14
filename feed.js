@@ -34,7 +34,11 @@ const TEMPLATE = /* html */ `
   .pill.show { display: block; }
   #notes { display: grid; gap: .65rem; }
   :host([flush]) #notes { gap: 0; }
-  :host([flush]) .status { display: none; }
+  /* flush hides the chatty live counter, but never the states that matter:
+     without this, an empty or failed feed is an unexplained blank column */
+  :host([flush]) .status[data-kind="live"] { display: none; }
+  .status[data-kind="empty"], .status[data-kind="error"] {
+    text-align: center; padding: 2.5rem 1rem; font-size: .9rem; }
   :host([flush]) nostr-note { margin-top: -1px; }
 </style>
 <div class="status" id="status">connecting…</div>
@@ -93,15 +97,20 @@ class NostrFeed extends HTMLElement {
     this.notesEl.innerHTML = ''
     this.count = 0
     const filters = this._filters()
-    if (!filters) { this.statusEl.textContent = 'no valid authors (hex pubkeys required)'; return }
-    this.statusEl.textContent = 'loading…'
+    if (!filters) { this._status('no valid authors (hex pubkeys required)', 'error'); return }
+    this._status('loading…', 'empty')
     this._eosed = false
     this.buffer = []
     this.pillEl.classList.remove('show')
     this.sub = this._pool.subscribe(filters, {
       onEvent: (event) => {
-        // batch-live: after the backlog, X-style — buffer new posts behind a pill
-        if (this._eosed && this.hasAttribute('batch-live')) {
+        // batch-live: after the backlog, X-style — buffer new posts behind a pill.
+        // But never behind an EMPTY feed: EOSE fires once the first relay finishes
+        // (or 2.5s later), so a slower relay's backlog would otherwise land in the
+        // buffer and the user's first paint is "nothing here" next to "Show 64
+        // posts". The pill exists to avoid disturbing a reader; there is no reader
+        // to disturb when nothing has rendered.
+        if (this._eosed && this.count > 0 && this.hasAttribute('batch-live')) {
           this.buffer.push(event)
           this.pillEl.textContent = 'Show ' + this.buffer.length + (this.buffer.length === 1 ? ' post' : ' posts')
           this.pillEl.classList.add('show')
@@ -109,8 +118,20 @@ class NostrFeed extends HTMLElement {
         }
         this._add(event)
       },
-      onEose: () => { this._eosed = true; this.statusEl.textContent = this.count + ' notes · live' },
+      onEose: () => {
+        this._eosed = true
+        if (this.count || this.buffer.length) this._status(this.count + ' notes · live', 'live')
+        else this._status(navigator.onLine
+          ? 'Nothing here yet. Try another relay, or check back soon.'
+          : 'You are offline — nothing to show until you reconnect.', 'empty')
+      },
     })
+  }
+
+  /** kind: 'live' (hidden under [flush]) | 'empty' | 'error' */
+  _status(text, kind = 'live') {
+    this.statusEl.textContent = text
+    this.statusEl.dataset.kind = kind
   }
 
   _flush() {
@@ -121,6 +142,7 @@ class NostrFeed extends HTMLElement {
 
   _add(event) {
     this.count++
+    if (this._eosed && this.statusEl.dataset.kind !== 'live') this._status(this.count + ' notes · live', 'live')
     const note = document.createElement('nostr-note')
     note.setAttribute('clickable', '')
     if (this.hasAttribute('flat')) note.setAttribute('flat', '')
